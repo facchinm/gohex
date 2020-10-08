@@ -56,6 +56,17 @@ func getExtendedAddress(bytes []byte) (adr uint32, err error) {
 	return adr, nil
 }
 
+func getExtendedSegmentAddress(bytes []byte) (adr uint32, err error) {
+	if bytes[0] != 2 {
+		return 0, errors.New("incorrect data length field in extended linear address line")
+	}
+	if binary.BigEndian.Uint16(bytes[1:3]) != 0 {
+		return 0, errors.New("incorrect address field in extended linear address line")
+	}
+	adr = uint32(binary.BigEndian.Uint16(bytes[4:6])) << 4
+	return adr, nil
+}
+
 func getDataLine(bytes []byte) (adr uint16, data []byte) {
 	size := bytes[0]
 	adr = binary.BigEndian.Uint16(bytes[1:3])
@@ -104,6 +115,13 @@ func writeExtendedAddressLine(writer io.Writer, extAdr uint32) {
 	a := make([]byte, 2)
 	binary.BigEndian.PutUint16(a, uint16(extAdr>>16))
 	s := strings.ToUpper(hex.EncodeToString(makeDataLine(0, _ADDRESS_RECORD, a)))
+	fmt.Fprintf(writer, ":%s\n", s)
+}
+
+func writeExtendedSegmentAddressLine(writer io.Writer, extAdr uint32) {
+	a := make([]byte, 2)
+	binary.BigEndian.PutUint16(a, uint16(extAdr>>4))
+	s := strings.ToUpper(hex.EncodeToString(makeDataLine(0, _EXTENDED_RECORD, a)))
 	fmt.Fprintf(writer, ":%s\n", s)
 }
 

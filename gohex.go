@@ -9,10 +9,11 @@ import (
 
 // Constants definitions of IntelHex record types
 const (
-	_DATA_RECORD    byte = 0 // Record with data bytes
-	_EOF_RECORD     byte = 1 // Record with end of file indicator
-	_ADDRESS_RECORD byte = 4 // Record with extended linear address
-	_START_RECORD   byte = 5 // Record with start linear address
+	_DATA_RECORD     byte = 0 // Record with data bytes
+	_EOF_RECORD      byte = 1 // Record with end of file indicator
+	_EXTENDED_RECORD byte = 2 // Record with end of file indicator
+	_ADDRESS_RECORD  byte = 4 // Record with extended linear address
+	_START_RECORD    byte = 5 // Record with start linear address
 )
 
 // Structure with binary data segment fields
@@ -33,6 +34,7 @@ type Memory struct {
 	dataSegments     []*DataSegment // Slice with pointers to DataSegments
 	startAddress     uint32         // Start linear address
 	extendedAddress  uint32         // Extended linear address
+	offset           uint32         // Extended "continued" linear address
 	eofFlag          bool           // End of file record exist flag
 	startFlag        bool           // Start address record exist flag
 	lineNum          uint           // Parser input line number
@@ -211,7 +213,7 @@ func (m *Memory) parseIntelHexRecord(bytes []byte) error {
 	switch record_type := bytes[3]; record_type {
 	case _DATA_RECORD:
 		a, data := getDataLine(bytes)
-		adr := uint32(a) + m.extendedAddress
+		adr := uint32(a) + m.extendedAddress + m.offset
 		err = m.AddBinary(adr, data)
 		if err != nil {
 			return err
@@ -222,6 +224,12 @@ func (m *Memory) parseIntelHexRecord(bytes []byte) error {
 			return newParseError(_RECORD_ERROR, err.Error(), m.lineNum)
 		}
 		m.eofFlag = true
+	case _EXTENDED_RECORD:
+		//Extended 8086 Segment Record
+		m.offset, err = getExtendedSegmentAddress(bytes)
+		if err != nil {
+			return newParseError(_RECORD_ERROR, err.Error(), m.lineNum)
+		}
 	case _ADDRESS_RECORD:
 		m.extendedAddress, err = getExtendedAddress(bytes)
 		if err != nil {
@@ -279,22 +287,23 @@ func (m *Memory) ParseIntelHex(reader io.Reader) error {
 func (m *Memory) dumpDataSegment(writer io.Writer, s *DataSegment, lineLength byte) error {
 	lineAdr := s.Address
 	lineData := []byte{}
+	currentOffset := uint32(0)
 	for byteAdr := s.Address; byteAdr < s.Address+uint32(len(s.Data)); byteAdr++ {
-		if ((byteAdr & 0xFFFF0000) != m.extendedAddress) || (m.firstAddressFlag == false) {
-			m.firstAddressFlag = true
-			if len(lineData) != 0 {
-				err := writeDataLine(writer, &lineAdr, byteAdr, &lineData)
-				if err != nil {
-					return err
-				}
-			}
-			m.extendedAddress = (byteAdr & 0xFFFF0000)
-			writeExtendedAddressLine(writer, m.extendedAddress)
-		}
 		if len(lineData) >= int(lineLength) {
-			err := writeDataLine(writer, &lineAdr, byteAdr, &lineData)
+			err := writeDataLine(writer, &lineAdr, byteAdr&0xFFFF, &lineData)
 			if err != nil {
 				return err
+			}
+		}
+		if (byteAdr & 0xFFFF0000) != m.extendedAddress {
+			offset := (byteAdr & 0xFFFF0000)
+			if currentOffset != offset {
+				currentOffset = offset
+				if m.extendedAddress != 0 {
+					writeExtendedAddressLine(writer, offset)
+				} else {
+					writeExtendedSegmentAddressLine(writer, offset)
+				}
 			}
 		}
 		lineData = append(lineData, s.Data[byteAdr-s.Address])
